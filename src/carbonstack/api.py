@@ -21,6 +21,7 @@ import threading
 import traceback
 from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import parse_qs, urlparse
 
@@ -34,6 +35,33 @@ _ROUTES: list[tuple[str, re.Pattern, Handler]] = []
 #: The server is threaded but the store holds one connection, so requests
 #: take this in turn. Held only around dispatch, never around socket IO.
 _DISPATCH_LOCK = threading.Lock()
+
+#: Served as files for anything outside /api/*. pilot.db is data, not a
+#: page: it stays reachable only through the API, never as a download.
+_STATIC_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".csv": "text/csv; charset=utf-8",
+    ".md": "text/markdown; charset=utf-8",
+    ".txt": "text/plain; charset=utf-8",
+}
+_STATIC_SKIP = {"pilot.db", "template.html"}
+
+
+def static_target(static_root: Path, path: str) -> Path | None:
+    """Map a request path to a file under the static directory, or None.
+
+    The only security logic in the static path, kept pure so it is trivially
+    testable: `/` serves the dashboard, anything escaping the directory or
+    naming a skipped file is refused the same as a missing one.
+    """
+    rel = "index.html" if path in ("", "/") else path.lstrip("/").split("?")[0]
+    target = (static_root / rel).resolve()
+    if not target.is_relative_to(static_root):
+        return None
+    if target.name in _STATIC_SKIP or not target.is_file():
+        return None
+    return target
 
 
 def route(method: str, pattern: str):
@@ -449,7 +477,9 @@ def dispatch(store: Store, method: str, path: str, query: dict,
     return 404, {"error": f"no route for {method} {path}"}
 
 
-def make_handler(store: Store, token: str | None):
+def make_handler(store: Store, token: str | None, static_dir: Path | None = None):
+    static_root = static_dir.resolve() if static_dir is not None else None
+
     class ApiHandler(BaseHTTPRequestHandler):
         server_version = "carbonstack"
 
@@ -474,11 +504,32 @@ def make_handler(store: Store, token: str | None):
             self.end_headers()
             self.wfile.write(raw)
 
+        def _serve_static(self, path: str) -> None:
+            target = static_target(static_root, path) if static_root else None
+            if target is None:
+                self._respond(404, {"error": f"no route for GET {path}"})
+                return
+            raw = target.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", _STATIC_TYPES.get(
+                target.suffix.lower(), "application/octet-stream"))
+            self.send_header("Content-Length", str(len(raw)))
+            self.send_header("Cache-Control", "public, max-age=60")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(raw)
+
         def _handle(self, method: str) -> None:
+            parsed = urlparse(self.path)
+            # The dashboard is public, like the Vercel deployment of it: it
+            # carries only committed demo data, so it skips the token check
+            # the API itself still goes through below.
+            if method == "GET" and not parsed.path.startswith("/api/"):
+                self._serve_static(parsed.path)
+                return
             if not self._authorised():
                 self._respond(401, {"error": "bearer token required"})
                 return
-            parsed = urlparse(self.path)
             body: dict = {}
             if method == "POST":
                 length = int(self.headers.get("Content-Length") or 0)
@@ -517,13 +568,16 @@ def make_handler(store: Store, token: str | None):
     return ApiHandler
 
 
-def serve(store: Store, host: str = "127.0.0.1", port: int = 8000) -> None:
-    """Run the API. Token comes from CARBONSTACK_TOKEN if set."""
+def serve(store: Store, host: str = "127.0.0.1", port: int = 8000,
+          static_dir: Path | None = None) -> None:
+    """Run the API, and the static dashboard beside it when given one."""
     token = os.environ.get("CARBONSTACK_TOKEN")
-    httpd = ThreadingHTTPServer((host, port), make_handler(store, token))
+    httpd = ThreadingHTTPServer((host, port), make_handler(store, token, static_dir))
     print(f"carbonstack api on http://{host}:{port}  db={store.path}")
     print("  auth: " + ("bearer token required" if token
                         else "OPEN — set CARBONSTACK_TOKEN to require one"))
+    print(f"  static: {static_dir if static_dir else '— (API only)'}" + (
+        "" if not token else " (public; the token guards the API, not the demo page)"))
     print("  routes:")
     for m, regex, fn in sorted(_ROUTES, key=lambda r: (r[2].__name__)):
         print(f"    {m:<5} {regex.pattern[1:-1].replace('(?P<', '{').replace('>[^/]+)', '}')}")

@@ -1118,8 +1118,15 @@ def cmd_verify(args) -> int:
 
 def cmd_serve(args) -> int:
     from .api import serve
+    static = args.static or os.environ.get("CARBONSTACK_STATIC", "")
+    if not static:
+        # A dev checkout serves its own dashboard; an installed package or a
+        # container without one stays API-only rather than 404ing the page.
+        candidate = Path(__file__).resolve().parents[2] / "dashboard"
+        static = str(candidate) if (candidate / "index.html").exists() else ""
     store = Store(args.db, actor="api")
-    serve(store, args.host, args.port)
+    serve(store, args.host, args.port,
+          static_dir=Path(static) if static else None)
     return 0
 
 
@@ -1416,6 +1423,9 @@ def build_parser() -> argparse.ArgumentParser:
     # Railway injects PORT and expects 0.0.0.0; flags still win when given.
     p.add_argument("--host", default=os.environ.get("CARBONSTACK_HOST", "127.0.0.1"))
     p.add_argument("--port", type=int, default=int(os.environ.get("PORT") or 8000))
+    p.add_argument("--static", default="",
+                   help="dashboard directory to serve beside the API "
+                        "(default: CARBONSTACK_STATIC, else <repo>/dashboard)")
     p.set_defaults(func=cmd_serve)
 
     p = sub.add_parser("export", help="write a demo project to JSON")
