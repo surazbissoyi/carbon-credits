@@ -63,7 +63,11 @@ class Store:
     def __init__(self, path: str | Path = ":memory:", *, actor: str = "system"):
         self.path = str(path)
         self.actor = actor
-        self.conn = sqlite3.connect(self.path)
+        # The HTTP server handles each request on its own thread sharing this
+        # one connection, so it must be usable across threads. Callers that
+        # share a Store between threads serialise access (see api.dispatch);
+        # single-threaded use is unaffected.
+        self.conn = sqlite3.connect(self.path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.execute("PRAGMA journal_mode = WAL")

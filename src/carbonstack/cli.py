@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import date, timedelta
 from pathlib import Path
@@ -1177,7 +1178,9 @@ def build_parser() -> argparse.ArgumentParser:
         description="dMRV and issuance for land-based carbon projects.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__)
-    ap.add_argument("--db", default=DEFAULT_DB, help=f"database file (default {DEFAULT_DB})")
+    ap.add_argument("--db", default=os.environ.get("CARBONSTACK_DB", DEFAULT_DB),
+                      help=f"database file (default {DEFAULT_DB}; "
+                           f"CARBONSTACK_DB={os.environ.get('CARBONSTACK_DB', '') or DEFAULT_DB})")
     ap.add_argument("--actor", default="", help="who is doing this; required for writes")
     sub = ap.add_subparsers(dest="command", required=True)
 
@@ -1410,8 +1413,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_events)
 
     p = sub.add_parser("serve", help="run the HTTP API")
-    p.add_argument("--host", default="127.0.0.1")
-    p.add_argument("--port", type=int, default=8000)
+    # Railway injects PORT and expects 0.0.0.0; flags still win when given.
+    p.add_argument("--host", default=os.environ.get("CARBONSTACK_HOST", "127.0.0.1"))
+    p.add_argument("--port", type=int, default=int(os.environ.get("PORT") or 8000))
     p.set_defaults(func=cmd_serve)
 
     p = sub.add_parser("export", help="write a demo project to JSON")

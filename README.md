@@ -290,6 +290,24 @@ Two ways to make writes real, when you want them:
 2. **Run it on a real disk.** `carbonstack serve` on any small VM or container
    host works today with no changes — the API is the same code either way.
 
+### Railway: the read-write API
+
+`Dockerfile` + `railway.json` are option 2, ready to deploy. Unlike the
+Vercel deployment this one is fully read-write — every POST executes, and
+the event chain persists on a volume instead of vanishing with the container.
+
+1. Create a service from the repo — Railway picks up the `Dockerfile`
+   automatically, and `railway.json` supplies the `/api/health` healthcheck.
+2. Add a **Volume mounted at `/data`**. That is the whole durability story:
+   the database lives at `/data/carbonstack.db`, and redeploys keep it.
+3. Generate a domain under Networking.
+4. Optionally set `CARBONSTACK_TOKEN` to require a bearer token.
+
+First boot seeds the volume from the committed demo database
+(`dashboard/pilot.db`); later boots keep what is there, never re-seed.
+Honoured env: `PORT` (injected by Railway), `CARBONSTACK_DB` (default
+`/data/carbonstack.db`), `CARBONSTACK_HOST`, `CARBONSTACK_TOKEN`.
+
 The static dashboard is unaffected by this: it embeds its data and needs no
 backend at all.
 

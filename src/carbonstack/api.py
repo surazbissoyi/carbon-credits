@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import traceback
 from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -29,6 +30,10 @@ from .store.repo import Store, StoreError
 
 Handler = Callable[..., Any]
 _ROUTES: list[tuple[str, re.Pattern, Handler]] = []
+
+#: The server is threaded but the store holds one connection, so requests
+#: take this in turn. Held only around dispatch, never around socket IO.
+_DISPATCH_LOCK = threading.Lock()
 
 
 def route(method: str, pattern: str):
@@ -449,7 +454,9 @@ def make_handler(store: Store, token: str | None):
         server_version = "carbonstack"
 
         def log_message(self, fmt: str, *args) -> None:
-            print(f"  {self.command} {self.path} → {args[1] if len(args) > 1 else ''}")
+            # ASCII on purpose: stdout is not always UTF-8 (Windows consoles,
+            # redirected logs), and a logging line must never sink a request.
+            print(f"  {self.command} {self.path} -> {args[1] if len(args) > 1 else ''}")
 
         def _authorised(self) -> bool:
             if not token:
@@ -462,6 +469,8 @@ def make_handler(store: Store, token: str | None):
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(raw)))
+            # The static dashboard (Vercel) calls this API cross-origin.
+            self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(raw)
 
@@ -483,8 +492,9 @@ def make_handler(store: Store, token: str | None):
                         self._respond(400, {"error": "body must be a JSON object"})
                         return
             try:
-                status, payload = dispatch(store, method, parsed.path,
-                                           parse_qs(parsed.query), body)
+                with _DISPATCH_LOCK:
+                    status, payload = dispatch(store, method, parsed.path,
+                                               parse_qs(parsed.query), body)
             except Exception:
                 traceback.print_exc()
                 self._respond(500, {"error": "internal error"})
@@ -496,6 +506,13 @@ def make_handler(store: Store, token: str | None):
 
         def do_POST(self) -> None:
             self._handle("POST")
+
+        def do_OPTIONS(self) -> None:
+            self.send_response(204)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+            self.end_headers()
 
     return ApiHandler
 
