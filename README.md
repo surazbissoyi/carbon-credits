@@ -308,6 +308,13 @@ First boot seeds the volume from the committed demo database
 Honoured env: `PORT` (injected by Railway), `CARBONSTACK_DB` (default
 `/data/carbonstack.db`), `CARBONSTACK_HOST`, `CARBONSTACK_TOKEN`.
 
+Live at `https://carbon-credits-production-5373.up.railway.app` (project
+`carbon-credits` in the `glalit52` workspace). The service is connected to
+this repo, so pushes to the default branch redeploy automatically.
+`.railway/railway.ts` is the infrastructure as code — Dockerfile build,
+`/api/health` healthcheck — and owns the service config; `railway.json`
+remains as a fallback.
+
 The static dashboard is unaffected by this: it embeds its data and needs no
 backend at all.
 
