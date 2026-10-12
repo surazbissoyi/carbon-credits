@@ -290,11 +290,13 @@ Two ways to make writes real, when you want them:
 2. **Run it on a real disk.** `carbonstack serve` on any small VM or container
    host works today with no changes — the API is the same code either way.
 
-### Railway: the read-write API
+### Railway: the whole deployment
 
-`Dockerfile` + `railway.json` are option 2, ready to deploy. Unlike the
-Vercel deployment this one is fully read-write — every POST executes, and
-the event chain persists on a volume instead of vanishing with the container.
+`Dockerfile` + `.railway/railway.ts` deploy frontend and backend as one
+service: `/` is the dashboard, `/packs/<site>/` the evidence packs, and
+`/api/...` the read-write API. Unlike the Vercel deployment every POST
+executes, and the event chain persists on a volume instead of vanishing
+with the container.
 
 1. Create a service from the repo — Railway picks up the `Dockerfile`
    automatically, and `railway.json` supplies the `/api/health` healthcheck.
